@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.cache/
+data/cache/
+data/index/
+data/web_jobs/
+data/parsed.json
+data/tenders/*
+data/brochures/*
+data/gold/*
+out/
