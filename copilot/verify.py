@@ -21,6 +21,9 @@ def quote_in_text(quote: str, text: str, threshold: float = 0.9) -> bool:
     q, t = normalize(quote), normalize(text)
     if not q:
         return False
+    # Fuzzy matching must never excuse changing a technical number.
+    if not numbers_in(quote).issubset(numbers_in(text)):
+        return False
     if q in t:
         return True
     matched = sum(b.size for b in SequenceMatcher(None, q, t, autojunk=False).get_matching_blocks())
@@ -44,9 +47,17 @@ def verify(raw: RawMatch, req: Requirement, shown: dict[str, Chunk], product: st
                 notes.append("evidence comes from the supplier's compliance form, which restates the tender")
             if SequenceMatcher(None, normalize(raw.evidence_quote), normalize(req.clause_text)).ratio() > 0.8:
                 notes.append("evidence just restates the tender requirement")
+            quote_numbers = numbers_in(raw.evidence_quote)
+            missing_quote_numbers = quote_numbers - numbers_in(chunk.text)
+            if missing_quote_numbers:
+                notes.append(f"evidence quote contains numbers absent from the source: {sorted(missing_quote_numbers)}")
             missing = numbers_in(raw.offered_value) - numbers_in(chunk.text)
             if missing:
                 notes.append(f"offered value contains numbers not in the cited excerpt: {sorted(missing)}")
+            required_numbers = numbers_in(req.required_value or req.clause_text)
+            missing_required = required_numbers - quote_numbers
+            if raw.status == "Compliant" and missing_required:
+                notes.append(f"evidence does not explicitly cover all required numbers: {sorted(missing_required)}")
         if raw.status == "Compliant" and raw.confidence < 0.6:
             notes.append(f"low confidence ({raw.confidence:.2f}) for a Compliant verdict")
 

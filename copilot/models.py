@@ -3,6 +3,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 Status = Literal["Compliant", "Partial", "Non-compliant", "Not found", "Needs human review"]
+RunState = Literal["completed", "api_error", "not_run"]
 STATUSES: list[str] = ["Compliant", "Partial", "Non-compliant", "Not found", "Needs human review"]
 
 
@@ -47,3 +48,5 @@ class MatchResult(RawMatch):
     source_file: str = ""
     page: Optional[int] = None
     verifier_note: str = ""
+    extraction_note: str = ""
+    run_state: RunState = "completed"

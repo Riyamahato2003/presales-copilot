@@ -15,7 +15,7 @@ class Index:
         self.vecs = llm.embed(docs, "doc") if docs else np.zeros((0, 1))
         self.tok = [set(tokens(d)) for d in docs]
 
-    def search(self, query: str, k: int = 6, max_pinned: int = 3) -> list[Chunk]:
+    def search(self, query: str, k: int = 6, max_pinned: int | None = None) -> list[Chunk]:
         if not self.chunks:
             return []
         q = self.llm.embed([query], "query")[0]
@@ -31,7 +31,9 @@ class Index:
             c = self.chunks[i]
             if not c.pinned and len(picked) < k:
                 picked.append(c)
-        pinned = [c for c in self.chunks if c.pinned][:max_pinned]
+        pinned = [c for c in self.chunks if c.pinned]
+        if max_pinned is not None:
+            pinned = pinned[:max_pinned]
         seen, out = set(), []
         for c in picked + pinned:
             if c.id not in seen:

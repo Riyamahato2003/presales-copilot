@@ -13,3 +13,9 @@ services:
         value: gemini-embedding-001
       - key: EMBED_BACKEND
         value: local
+      - key: APP_ENV
+        value: production
+      - key: COPILOT_ACCESS_PASSWORD
+        sync: false
+      - key: MAX_DAILY_JOBS
+        value: "5"

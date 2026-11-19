@@ -9,6 +9,7 @@ from .export import write_workbook
 from .ingest import ingest_file, tender_text
 from .match import match_requirement
 from .models import MatchResult, Requirement
+from .llm import QuotaExceeded
 from .requirements_extract import extract_requirements
 from .retrieve import Index
 
@@ -20,15 +21,45 @@ def run_pipeline(llm, tender: str, brochures: list[str], out_xlsx: str, top_k: i
     log(f"  extracted {len(reqs)} requirements")
 
     results: dict[str, list[MatchResult]] = {}
+    quota_stopped = False
     for b in brochures:
         product = Path(b).stem
         chunks = ingest_file(b)
         log(f"Brochure {Path(b).name}: {len(chunks)} chunks, {sum(c.pinned for c in chunks)} pinned")
-        index = Index(chunks, llm, product)
         rows = []
+        if quota_stopped:
+            rows = [MatchResult(status="Needs human review", offered_value="", evidence_chunk_id="",
+                evidence_quote="", reasoning="No compliance assessment was run after provider quota exhaustion.",
+                confidence=0.0, req_id=r.req_id, product=product, verifier_note="Not run: provider quota exhausted.",
+                extraction_note=r.extraction_note, run_state="not_run") for r in reqs]
+            results[product] = rows
+            continue
+        try:
+            index = Index(chunks, llm, product)
+        except QuotaExceeded as exc:
+            log(f"  Provider quota stopped retrieval: {exc}")
+            quota_stopped = True
+            index = None
         for i, r in enumerate(reqs, 1):
+            if quota_stopped:
+                rows.append(MatchResult(status="Needs human review", offered_value="", evidence_chunk_id="",
+                    evidence_quote="", reasoning="No compliance assessment was run after provider quota exhaustion.",
+                    confidence=0.0, req_id=r.req_id, product=product, verifier_note="Not run: provider quota exhausted.",
+                    extraction_note=r.extraction_note, run_state="not_run"))
+                continue
             log(f"  [{product}] {i}/{len(reqs)} {r.req_id} {r.parameter[:40]}")
-            rows.append(match_requirement(llm, r, index, k=top_k))
+            try:
+                match = match_requirement(llm, r, index, k=top_k)
+            except QuotaExceeded as exc:
+                log(f"  Provider quota exhausted at {r.req_id}; remaining rows marked Not run.")
+                quota_stopped = True
+                rows.append(MatchResult(status="Needs human review", offered_value="", evidence_chunk_id="",
+                    evidence_quote="", reasoning="No compliance assessment was produced because provider quota was exhausted.",
+                    confidence=0.0, req_id=r.req_id, product=product,
+                    verifier_note=f"API error: {exc}", extraction_note=r.extraction_note, run_state="api_error"))
+                continue
+            match.extraction_note = r.extraction_note
+            rows.append(match)
         results[product] = rows
 
     meta = {"tender": Path(tender).name, "model": model_name, "run_at": datetime.now().isoformat(timespec="seconds")}
