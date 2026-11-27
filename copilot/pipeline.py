@@ -12,6 +12,7 @@ from .models import MatchResult, Requirement
 from .llm import QuotaExceeded
 from .requirements_extract import extract_requirements
 from .retrieve import Index
+from .source_layout import link_requirements
 
 
 def run_pipeline(llm, tender: str, brochures: list[str], out_xlsx: str, top_k: int = 6,
@@ -21,7 +22,8 @@ def run_pipeline(llm, tender: str, brochures: list[str], out_xlsx: str, top_k: i
     if not tender_chunks:
         raise ValueError("No readable tender content.")
     tender_ocr = any(c.kind == "ocr" for c in tender_chunks)
-    reqs: list[Requirement] = extract_requirements(llm, "\n".join(c.text for c in tender_chunks))
+    reqs: list[Requirement] = extract_requirements(llm, "\n".join(c.text for c in tender_chunks if c.kind != "pdf_table"))
+    link_requirements(reqs, tender_chunks)
     if tender_ocr:
         for r in reqs:
             r.extraction_note = (r.extraction_note + " OCR used in tender; verify requirement against source page.").strip()
