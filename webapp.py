@@ -82,6 +82,7 @@ def execute(jid,tender,brochures,out):
 def valid_file(filename:str, content:bytes)->bool:
     suffix=Path(filename).suffix.lower()
     if suffix=='.pdf': return content.startswith(b'%PDF-')
+    if suffix=='.doc': return content.startswith(bytes.fromhex('d0cf11e0a1b11ae1'))
     if suffix in {'.docx','.xlsx'} and content.startswith(b'PK'):
         try:
             with zipfile.ZipFile(BytesIO(content)) as z:
@@ -121,9 +122,9 @@ async def create_job(tender: UploadFile=File(...),brochures: list[UploadFile]=Fi
         today_count=sum(1 for s in state.values() if datetime.fromtimestamp(s.get('created_at',0),timezone.utc).date()==today)
         if today_count>=daily_limit:
             raise HTTPException(429,f'Daily run limit reached ({daily_limit}). Try again tomorrow or ask the administrator to adjust MAX_DAILY_JOBS.')
-    files=[tender,*brochures]; allowed={'.pdf','.docx','.xlsx'}
+    files=[tender,*brochures]; allowed={'.pdf','.doc','.docx','.xlsx'}
     if any(Path(f.filename or '').suffix.lower() not in allowed for f in files):
-        raise HTTPException(400,'Only PDF, DOCX, and XLSX files are supported.')
+        raise HTTPException(400,'Only PDF, DOC, DOCX, and XLSX files are supported.')
     payloads=[]; total=0
     for f in files:
         content=await f.read(15*1024*1024+1)
