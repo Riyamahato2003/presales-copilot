@@ -16,6 +16,7 @@ from collections import Counter
 from pathlib import Path
 
 from .models import Chunk
+from .source_layout import native_regions, native_table_rows
 from .document_io import MAX_PAGES, MAX_OCR_PAGES, page_needs_ocr, local_ocr, legacy_word_text
 
 MAX_CHARS = 1100
@@ -115,7 +116,21 @@ def ingest_pdf(path: str | Path) -> list[Chunk]:
     chunks = _make_chunks(blocks, str(path), "text")
     if not chunks:
         raise ValueError("PDF contains no readable text.")
-    return [c.model_copy(update={"kind": "ocr"}) if c.page in ocr_pages else c for c in chunks]
+    by_page = {}
+    for c in chunks:
+        kind = "ocr" if c.page in ocr_pages else c.kind
+        c = c.model_copy(update={"kind": kind, "locator": f"PDF page {c.page}"})
+        by_page.setdefault(c.page, []).append(c)
+    out = []
+    with pymupdf.open(str(path)) as doc:
+        for number, p in enumerate(doc, 1):
+            group = by_page.get(number, [])
+            if number in ocr_pages:
+                out.extend(group)
+                continue
+            out.extend(native_regions(p, group))
+            out.extend(native_table_rows(p, Path(path).name, number))
+    return out
 
 
 def _docx_blocks(path: str | Path) -> list[str]:
@@ -158,7 +173,7 @@ def _docx_blocks(path: str | Path) -> list[str]:
 def ingest_docx(path: str | Path) -> list[Chunk]:
     raw = _docx_blocks(path)
     lines = [seg for block in raw for seg in block.split("\n")]
-    return _make_chunks([(1, lines)], str(path), "docx")
+    return [c.model_copy(update={"locator": "Word document, physical page not established"}) for c in _make_chunks([(1, lines)], str(path), "docx")]
 
 
 def ingest_xlsx(path: str | Path) -> list[Chunk]:
@@ -171,7 +186,7 @@ def ingest_xlsx(path: str | Path) -> list[Chunk]:
             vals = [str(v).strip() for v in row if v is not None and str(v).strip()]
             if vals:
                 lines.append(" | ".join(vals))
-        chunks += _make_chunks([(idx, lines)], str(path), "xlsx")
+        chunks += [c.model_copy(update={"locator": f"Worksheet {ws.title}"}) for c in _make_chunks([(idx, lines)], str(path), "xlsx")]
     return chunks
 
 
@@ -180,7 +195,7 @@ def ingest_file(path: str | Path) -> list[Chunk]:
     if ext == ".pdf":
         return ingest_pdf(path)
     if ext == ".doc":
-        return _make_chunks([(1, legacy_word_text(path).splitlines())], str(path), "legacy_doc")
+        return [c.model_copy(update={"locator": "Legacy Word document, physical page not established"}) for c in _make_chunks([(1, legacy_word_text(path).splitlines())], str(path), "legacy_doc")]
     if ext == ".docx":
         return ingest_docx(path)
     if ext in (".xlsx", ".xlsm"):
@@ -190,4 +205,4 @@ def ingest_file(path: str | Path) -> list[Chunk]:
 
 def tender_text(path: str | Path) -> str:
     """Full tender text, in reading order, for requirement extraction."""
-    return "\n".join(c.text for c in ingest_file(path))
+    return "\n".join(c.text for c in ingest_file(path) if c.kind != "pdf_table")
