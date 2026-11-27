@@ -13,7 +13,9 @@ class Chunk(BaseModel):
     source_file: str
     page: int                      # 1-based PDF page index (not the printed page label)
     section: str = ""
-    kind: str = "text"             # text | docx | xlsx
+    kind: str = "text"             # text | ocr | pdf_table | docx | legacy_doc | xlsx
+    locator: str = ""
+    regions: list[tuple[float, float, float, float]] = Field(default_factory=list)
     pinned: bool = False           # always shown to the matcher (e.g. "not included" lists)
     is_form: bool = False          # supplier's compliance form that restates the tender (not evidence)
 
@@ -31,6 +33,10 @@ class RawRequirement(BaseModel):
 class Requirement(RawRequirement):
     req_id: str
     extraction_note: str = ""
+    source_file: str = ""
+    source_page: Optional[int] = None
+    source_locator: str = ""
+    source_regions: list[tuple[float, float, float, float]] = Field(default_factory=list)
 
 
 class RawMatch(BaseModel):
@@ -47,6 +53,9 @@ class MatchResult(RawMatch):
     product: str
     source_file: str = ""
     page: Optional[int] = None
+    evidence_locator: str = ""
+    evidence_regions: list[tuple[float, float, float, float]] = Field(default_factory=list)
+    evidence_kind: str = ""
     verifier_note: str = ""
     extraction_note: str = ""
     run_state: RunState = "completed"
