@@ -36,6 +36,12 @@ def verify(raw: RawMatch, req: Requirement, shown: dict[str, Chunk], product: st
     if chunk:
         res.source_file, res.page = chunk.source_file, chunk.page
     notes: list[str] = []
+    if chunk and chunk.kind == "ocr":
+        notes.append("OCR-derived evidence must be checked against the original page")
+    if chunk and chunk.kind in {"legacy_doc", "docx"}:
+        res.page = None  # Word text does not have reliable physical page numbers
+        if chunk.kind == "legacy_doc":
+            notes.append("Legacy Word extraction requires source review; no verified page number")
 
     if raw.status in ASSERTIVE:
         if not chunk:
