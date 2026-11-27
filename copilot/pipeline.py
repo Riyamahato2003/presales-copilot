@@ -12,12 +12,21 @@ from .models import MatchResult, Requirement
 from .llm import QuotaExceeded
 from .requirements_extract import extract_requirements
 from .retrieve import Index
+from .source_layout import link_requirements
 
 
 def run_pipeline(llm, tender: str, brochures: list[str], out_xlsx: str, top_k: int = 6,
                  model_name: str = "", log=print) -> dict:
     log(f"Reading tender: {tender}")
-    reqs: list[Requirement] = extract_requirements(llm, tender_text(tender))
+    tender_chunks = ingest_file(tender)
+    if not tender_chunks:
+        raise ValueError("No readable tender content.")
+    tender_ocr = any(c.kind == "ocr" for c in tender_chunks)
+    reqs: list[Requirement] = extract_requirements(llm, "\n".join(c.text for c in tender_chunks if c.kind != "pdf_table"))
+    link_requirements(reqs, tender_chunks)
+    if tender_ocr:
+        for r in reqs:
+            r.extraction_note = (r.extraction_note + " OCR used in tender; verify requirement against source page.").strip()
     log(f"  extracted {len(reqs)} requirements")
 
     results: dict[str, list[MatchResult]] = {}
@@ -59,6 +68,9 @@ def run_pipeline(llm, tender: str, brochures: list[str], out_xlsx: str, top_k: i
                     verifier_note=f"API error: {exc}", extraction_note=r.extraction_note, run_state="api_error"))
                 continue
             match.extraction_note = r.extraction_note
+            if r.extraction_note and match.status in {"Compliant", "Partial", "Non-compliant"}:
+                match.verifier_note = (match.verifier_note + f" Downgraded from {match.status}: tender extraction requires review.").strip()
+                match.status = "Needs human review"
             rows.append(match)
         results[product] = rows
 

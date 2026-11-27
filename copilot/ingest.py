@@ -16,6 +16,8 @@ from collections import Counter
 from pathlib import Path
 
 from .models import Chunk
+from .source_layout import native_regions, native_table_rows
+from .document_io import MAX_PAGES, MAX_OCR_PAGES, page_needs_ocr, local_ocr, legacy_word_text
 
 MAX_CHARS = 1100
 PIN_RE = re.compile(r"not included|excluded|exclusions?|out of scope|not in (?:the )?scope|deviations?", re.I)
@@ -85,17 +87,50 @@ def _make_chunks(blocks: list[tuple[int, list[str]]], source: str, kind: str) ->
 
 def ingest_pdf(path: str | Path) -> list[Chunk]:
     import pymupdf
-    doc = pymupdf.open(str(path))
-    pages = [[re.sub(r'[ \t]{2,}', ' ', l.strip()) for l in p.get_text(sort=True).splitlines()] for p in doc]
-    # drop repeated letterhead/footer lines
-    counts = Counter(l for pg in pages for l in set(pg) if l)
+    pages = []
+    ocr_pages = set()
+    with pymupdf.open(str(path)) as doc:
+        if len(doc) > MAX_PAGES:
+            raise ValueError(f"PDF exceeds {MAX_PAGES} pages; split into sections.")
+        if doc.needs_pass:
+            raise ValueError("Encrypted PDF must be unlocked locally before ingestion.")
+        for i, p in enumerate(doc, start=1):
+            if page_needs_ocr(p):
+                if len(ocr_pages) >= MAX_OCR_PAGES:
+                    raise ValueError(f"PDF exceeds {MAX_OCR_PAGES} OCR pages; split into sections.")
+                try:
+                    text = local_ocr(p)
+                except ValueError as exc:
+                    raise ValueError(f"Page {i}: {exc}") from exc
+                ocr_pages.add(i)
+            else:
+                text = p.get_text(sort=True)
+            pages.append([re.sub(r'[ \t]{2,}', ' ', l.strip()) for l in text.splitlines()])
+    # Preserve OCR lines: a repeated clause may be substantive. Native text
+    # keeps existing repeated-header behavior for backwards compatibility.
+    counts = Counter(l for i, pg in enumerate(pages, 1) if i not in ocr_pages for l in set(pg) if l)
     threshold = max(3, int(0.6 * len(pages)))
     repeated = {l for l, c in counts.items() if c >= threshold}
-    blocks = []
-    for i, pg in enumerate(pages, start=1):
-        keep = [l for l in pg if l and l not in repeated and not PAGE_LABEL_RE.match(l)]
-        blocks.append((i, keep))
-    return _make_chunks(blocks, str(path), "text")
+    blocks = [(i, [l for l in pg if l and (i in ocr_pages or l not in repeated)
+                   and not PAGE_LABEL_RE.match(l)]) for i, pg in enumerate(pages, 1)]
+    chunks = _make_chunks(blocks, str(path), "text")
+    if not chunks:
+        raise ValueError("PDF contains no readable text.")
+    by_page = {}
+    for c in chunks:
+        kind = "ocr" if c.page in ocr_pages else c.kind
+        c = c.model_copy(update={"kind": kind, "locator": f"PDF page {c.page}"})
+        by_page.setdefault(c.page, []).append(c)
+    out = []
+    with pymupdf.open(str(path)) as doc:
+        for number, p in enumerate(doc, 1):
+            group = by_page.get(number, [])
+            if number in ocr_pages:
+                out.extend(group)
+                continue
+            out.extend(native_regions(p, group))
+            out.extend(native_table_rows(p, Path(path).name, number))
+    return out
 
 
 def _docx_blocks(path: str | Path) -> list[str]:
@@ -138,7 +173,7 @@ def _docx_blocks(path: str | Path) -> list[str]:
 def ingest_docx(path: str | Path) -> list[Chunk]:
     raw = _docx_blocks(path)
     lines = [seg for block in raw for seg in block.split("\n")]
-    return _make_chunks([(1, lines)], str(path), "docx")
+    return [c.model_copy(update={"locator": "Word document, physical page not established"}) for c in _make_chunks([(1, lines)], str(path), "docx")]
 
 
 def ingest_xlsx(path: str | Path) -> list[Chunk]:
@@ -151,7 +186,7 @@ def ingest_xlsx(path: str | Path) -> list[Chunk]:
             vals = [str(v).strip() for v in row if v is not None and str(v).strip()]
             if vals:
                 lines.append(" | ".join(vals))
-        chunks += _make_chunks([(idx, lines)], str(path), "xlsx")
+        chunks += [c.model_copy(update={"locator": f"Worksheet {ws.title}"}) for c in _make_chunks([(idx, lines)], str(path), "xlsx")]
     return chunks
 
 
@@ -159,6 +194,8 @@ def ingest_file(path: str | Path) -> list[Chunk]:
     ext = Path(path).suffix.lower()
     if ext == ".pdf":
         return ingest_pdf(path)
+    if ext == ".doc":
+        return [c.model_copy(update={"locator": "Legacy Word document, physical page not established"}) for c in _make_chunks([(1, legacy_word_text(path).splitlines())], str(path), "legacy_doc")]
     if ext == ".docx":
         return ingest_docx(path)
     if ext in (".xlsx", ".xlsm"):
@@ -168,4 +205,4 @@ def ingest_file(path: str | Path) -> list[Chunk]:
 
 def tender_text(path: str | Path) -> str:
     """Full tender text, in reading order, for requirement extraction."""
-    return "\n".join(c.text for c in ingest_file(path))
+    return "\n".join(c.text for c in ingest_file(path) if c.kind != "pdf_table")

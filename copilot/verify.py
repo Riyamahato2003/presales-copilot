@@ -35,7 +35,21 @@ def verify(raw: RawMatch, req: Requirement, shown: dict[str, Chunk], product: st
     chunk = shown.get(raw.evidence_chunk_id)
     if chunk:
         res.source_file, res.page = chunk.source_file, chunk.page
+        res.evidence_kind = chunk.kind
+        res.evidence_locator = chunk.locator
+        if normalize(raw.evidence_quote) and normalize(raw.evidence_quote) in normalize(chunk.text):
+            res.evidence_regions = chunk.regions
     notes: list[str] = []
+    if chunk and chunk.kind == "pdf_table":
+        notes.append("Detected table row requires source and column alignment review")
+    if chunk and chunk.kind == "xlsx":
+        res.page = None  # sheet is not a physical page
+    if chunk and chunk.kind == "ocr":
+        notes.append("OCR-derived evidence must be checked against the original page")
+    if chunk and chunk.kind in {"legacy_doc", "docx"}:
+        res.page = None  # Word text does not have reliable physical page numbers
+        if chunk.kind == "legacy_doc":
+            notes.append("Legacy Word extraction requires source review; no verified page number")
 
     if raw.status in ASSERTIVE:
         if not chunk:

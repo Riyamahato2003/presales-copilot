@@ -51,7 +51,9 @@ def build_prompt(req: Requirement, chunks: list[Chunk], product: str) -> str:
     ]
     for c in chunks:
         flag = " [SUPPLIER COMPLIANCE FORM - restates the tender, NOT evidence]" if c.is_form else ""
-        parts.append(f"[{c.id}] (file: {c.source_file}, page {c.page}, section: {c.section or '-'}){flag}\n<supplier_excerpt>\n{c.text}\n</supplier_excerpt>")
+        if c.kind in {"ocr", "pdf_table", "legacy_doc"}:
+            flag += " [EXTRACTION REQUIRES HUMAN REVIEW]"
+        parts.append(f"[{c.id}] (file: {c.source_file}, location: {c.locator or str(c.page)}, section: {c.section or '-'}){flag}\n<supplier_excerpt>\n{c.text}\n</supplier_excerpt>")
     return "\n".join(parts)
 
 

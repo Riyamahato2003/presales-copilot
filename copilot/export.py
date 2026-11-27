@@ -18,8 +18,8 @@ FILLS = {"Compliant": "C6EFCE", "Partial": "FFEB9C", "Non-compliant": "FFC7CE",
          "Not found": "D9D9D9", "Needs human review": "FCE4D6"}
 HEADERS = ["Req ID", "Tender ref", "Tender requirement", "Required value", "Priority", "AI status",
            "Offered value", "Evidence (verbatim)", "Source (file, PDF page)", "Reasoning", "Confidence",
-           "Run state", "Verifier note", "Extraction note", "Reviewer override", "Effective status", "Tender form entry", "Reviewer notes"]
-WIDTHS = [8, 18, 48, 20, 12, 18, 22, 46, 26, 44, 11, 16, 36, 36, 18, 18, 14, 30]
+           "Run state", "Verifier note", "Extraction note", "Reviewer override", "Effective status", "Tender form entry", "Reviewer notes", "Tender source", "Supplier evidence type"]
+WIDTHS = [8, 18, 48, 20, 12, 18, 22, 46, 26, 44, 11, 16, 36, 36, 18, 18, 14, 30, 34, 22]
 thin = Side(style="thin", color="BFBFBF")
 BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
 
@@ -60,12 +60,18 @@ def write_workbook(path: str, reqs: list[Requirement], results: dict[str, list[M
         ws.row_dimensions[1].height = 32
         for i, m in enumerate(rows, start=2):
             r = req_by_id[m.req_id]
-            src = f"{m.source_file}, p.{m.page}" if m.source_file else ""
+            src = ", ".join(filter(None, [m.source_file, m.evidence_locator or (f"PDF page {m.page}" if m.page else "")]))
+            tender_src = ", ".join(filter(None, [r.source_file, r.source_locator or (f"PDF page {r.source_page}" if r.source_page else "")]))
             ws.append([r.req_id, r.clause_ref, r.clause_text, r.required_value, r.priority, m.status,
                        m.offered_value, m.evidence_quote, src, m.reasoning, round(m.confidence, 2),
                        m.run_state, m.verifier_note, m.extraction_note or r.extraction_note, None,
                        f'=IF(O{i}="",F{i},O{i})',
-                       f'=IF(P{i}="Compliant","YES",IF(P{i}="Non-compliant","NO","REVIEW"))', None])
+                       f'=IF(P{i}="Compliant","YES",IF(P{i}="Non-compliant","NO","REVIEW"))', None, tender_src, m.evidence_kind])
+            # Treat untrusted document and model strings as literal text, not formulas.
+            for col in (1,2,3,4,5,6,7,8,9,10,12,13,14,19,20):
+                cell = ws.cell(row=i, column=col)
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
             for c in range(1, len(HEADERS) + 1):
                 cell = ws.cell(row=i, column=c)
                 cell.font = Font(name=FONT, size=10)
